@@ -1,0 +1,6 @@
+# Compiled binary (module name matches the directory)
+/model-provider
+
+# Test / coverage artifacts
+*.out
+*.test

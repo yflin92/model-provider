@@ -27,6 +27,8 @@ Each POST endpoint supports both non-streaming and streaming (set `"stream": tru
 go run .                 # listens on :8080
 go run . -addr :9000     # custom port
 ADDR=:9000 go run .      # or via env var
+go run . -minimal        # log only endpoint + model per request
+MINIMAL=1 go run .       # or via env var
 ```
 
 Build a standalone binary:
@@ -47,6 +49,10 @@ go build -o mock-model-provider .
   (`Authorization`, `x-api-key`, `api-key`, `Cookie`) are redacted — a short
   prefix/suffix is kept so you can still tell keys apart. A paired response line
   records the status and byte count.
+- **Minimal logging.** Pass `-minimal` (or `MINIMAL=1`) to log only a single
+  `MODEL <method> <path> -> <model>` line per request, suppressing the header/
+  body dump and the response line. The quiet way to watch which model a harness
+  asks for on each call.
 
 ## Point a client at it
 

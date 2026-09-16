@@ -56,7 +56,11 @@ func (w *captureWriter) Flush() {
 
 // logging wraps a handler, emitting a structured line for the request (with the
 // body pretty-printed when it is JSON) and one for the response.
-func logging(next http.Handler) http.Handler {
+//
+// When minimal is true it emits only the endpoint + model line per request
+// (via logModel) and suppresses the header/body dump and the response line —
+// the quiet way to watch which model a harness asks for on each call.
+func logging(next http.Handler, minimal bool) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		id := requestCounter.Add(1)
 		start := time.Now()
@@ -69,6 +73,12 @@ func logging(next http.Handler) http.Handler {
 		}
 
 		logModel(id, r, body)
+
+		if minimal {
+			next.ServeHTTP(w, r)
+			return
+		}
+
 		logRequest(id, r, body)
 
 		cw := &captureWriter{ResponseWriter: w}

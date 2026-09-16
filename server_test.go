@@ -27,7 +27,7 @@ func newTestServer() http.Handler {
 	mux.HandleFunc("/v1/responses", handleResponses)
 	mux.HandleFunc("/v1/models", handleModels)
 	mux.HandleFunc("/v1/models/", handleModel)
-	return logging(mux)
+	return logging(mux, false)
 }
 
 func post(t *testing.T, srv http.Handler, path, body string) *httptest.ResponseRecorder {
@@ -37,6 +37,52 @@ func post(t *testing.T, srv http.Handler, path, body string) *httptest.ResponseR
 	rec := httptest.NewRecorder()
 	srv.ServeHTTP(rec, req)
 	return rec
+}
+
+// captureLogs redirects the standard logger for the duration of fn and returns
+// what was written, so tests can assert on the logging middleware's output.
+func captureLogs(fn func()) string {
+	var buf strings.Builder
+	log.SetOutput(&buf)
+	defer log.SetOutput(io.Discard)
+	fn()
+	return buf.String()
+}
+
+func TestMinimalLogsEndpointAndModelOnly(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/v1/messages", handleClaudeMessages)
+	srv := logging(mux, true)
+
+	out := captureLogs(func() {
+		req := httptest.NewRequest(http.MethodPost, "/v1/messages",
+			strings.NewReader(`{"model":"claude-opus-4-8","messages":[{"role":"user","content":"ping"}]}`))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer sk-secret")
+		srv.ServeHTTP(httptest.NewRecorder(), req)
+	})
+
+	if !strings.Contains(out, "MODEL POST /v1/messages -> claude-opus-4-8") {
+		t.Errorf("minimal mode dropped the model line; got:\n%s", out)
+	}
+	// Minimal mode must suppress the full request/response dump entirely.
+	for _, unwanted := range []string{"Headers:", "Body:", "<- 200", "===="} {
+		if strings.Contains(out, unwanted) {
+			t.Errorf("minimal mode leaked %q; got:\n%s", unwanted, out)
+		}
+	}
+}
+
+func TestFullModeLogsBodyAndResponse(t *testing.T) {
+	out := captureLogs(func() {
+		post(t, newTestServer(), "/v1/messages",
+			`{"model":"claude-opus-4-8","messages":[{"role":"user","content":"ping"}]}`)
+	})
+	for _, want := range []string{"MODEL POST /v1/messages -> claude-opus-4-8", "Headers:", "Body:", "<- 200"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("full mode missing %q; got:\n%s", want, out)
+		}
+	}
 }
 
 func decode(t *testing.T, rec *httptest.ResponseRecorder) map[string]any {

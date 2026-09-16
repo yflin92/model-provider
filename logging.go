@@ -68,6 +68,7 @@ func logging(next http.Handler) http.Handler {
 			r.Body = io.NopCloser(bytes.NewReader(body))
 		}
 
+		logModel(id, r, body)
 		logRequest(id, r, body)
 
 		cw := &captureWriter{ResponseWriter: w}
@@ -76,6 +77,26 @@ func logging(next http.Handler) http.Handler {
 		log.Printf("[#%d] <- %d %s (%d bytes, %s)",
 			id, cw.status, http.StatusText(cw.status), cw.bytes, time.Since(start).Round(time.Millisecond))
 	})
+}
+
+// logModel emits a single, prominent line naming the model each request asks
+// for — the fast way to observe what a harness (Claude Code, Codex, an SDK)
+// actually sends on the wire, without scanning the full body dump below. Every
+// POST format the server speaks (Anthropic Messages, OpenAI Chat, OpenAI
+// Responses) carries `model` at the top level of the JSON body, so one field
+// covers them all. Requests without a model (health checks, model listings,
+// malformed bodies) are skipped.
+func logModel(id uint64, r *http.Request, body []byte) {
+	if len(body) == 0 {
+		return
+	}
+	var payload struct {
+		Model string `json:"model"`
+	}
+	if err := json.Unmarshal(body, &payload); err != nil || payload.Model == "" {
+		return
+	}
+	log.Printf("[#%d] MODEL %s %s -> %s", id, r.Method, r.URL.Path, payload.Model)
 }
 
 func logRequest(id uint64, r *http.Request, body []byte) {

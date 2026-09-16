@@ -16,6 +16,7 @@ const fixedCreated int64 = 1735689600 // 2025-01-01T00:00:00Z
 
 func main() {
 	addr := flag.String("addr", envOr("ADDR", ":8080"), "listen address")
+	minimal := flag.Bool("minimal", envOr("MINIMAL", "") != "", "log only endpoint + model per request, suppressing the full request/response dump")
 	flag.Parse()
 
 	mux := http.NewServeMux()
@@ -36,7 +37,7 @@ func main() {
 		writeJSON(w, http.StatusOK, map[string]any{"status": "ok"})
 	})
 
-	handler := logging(mux)
+	handler := logging(mux, *minimal)
 
 	log.Printf("mock model provider listening on %s", *addr)
 	log.Printf("  Claude:            POST %s/v1/messages", *addr)

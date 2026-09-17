@@ -17,7 +17,10 @@ const fixedCreated int64 = 1735689600 // 2025-01-01T00:00:00Z
 func main() {
 	addr := flag.String("addr", envOr("ADDR", ":8080"), "listen address")
 	minimal := flag.Bool("minimal", envOr("MINIMAL", "") != "", "log only endpoint + model per request, suppressing the full request/response dump")
+	proxyURL := flag.String("proxy", envOr("PROXY", ""), "relay requests to this upstream base URL (e.g. https://openrouter.ai/api/v1) instead of returning canned replies")
 	flag.Parse()
+
+	proxy := newProxyConfig(*proxyURL, envOr("OPENROUTER_API_KEY", ""))
 
 	mux := http.NewServeMux()
 
@@ -37,9 +40,19 @@ func main() {
 		writeJSON(w, http.StatusOK, map[string]any{"status": "ok"})
 	})
 
-	handler := logging(mux, *minimal)
+	// In proxy mode every request is relayed upstream; otherwise the mock mux
+	// serves canned responses.
+	var root http.Handler = mux
+	if proxy != nil {
+		root = proxy.handler(*minimal)
+	}
+	handler := logging(root, *minimal)
 
-	log.Printf("mock model provider listening on %s", *addr)
+	if proxy != nil {
+		log.Printf("proxy model provider listening on %s -> %s", *addr, proxy.baseURL)
+	} else {
+		log.Printf("mock model provider listening on %s", *addr)
+	}
 	log.Printf("  Claude:            POST %s/v1/messages", *addr)
 	log.Printf("  OpenAI chat:       POST %s/v1/chat/completions", *addr)
 	log.Printf("  OpenAI responses:  POST %s/v1/responses", *addr)

@@ -187,6 +187,62 @@ func bracketID(line string) string {
 	return line[start : start+end+1]
 }
 
+func TestProxyLogsToolCalls(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		io.WriteString(w, `{"choices":[{"message":{"tool_calls":[{"function":{"name":"get_weather"}}]}}]}`)
+	}))
+	defer upstream.Close()
+
+	var logBuf bytes.Buffer
+	log.SetOutput(&logBuf)
+	defer log.SetOutput(io.Discard)
+
+	srv := newProxyTestServer(upstream.URL, "", true)
+	reqBody := `{"model":"m","tools":[{"type":"function","function":{"name":"get_weather"}}],"messages":[]}`
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(reqBody))
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+
+	// Client still gets the full response body.
+	if !strings.Contains(rec.Body.String(), "get_weather") {
+		t.Errorf("response not relayed to client: %q", rec.Body.String())
+	}
+
+	out := logBuf.String()
+	if !strings.Contains(out, "PROXY tools offered: get_weather") {
+		t.Errorf("missing tools-offered log line; got:\n%s", out)
+	}
+	if !strings.Contains(out, "PROXY tool calls: get_weather") {
+		t.Errorf("missing tool-calls log line; got:\n%s", out)
+	}
+}
+
+func TestProxyLogsStreamedToolCalls(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		io.WriteString(w, "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"name\":\"search\"}}]}}]}\n\n")
+		io.WriteString(w, "data: [DONE]\n\n")
+	}))
+	defer upstream.Close()
+
+	var logBuf bytes.Buffer
+	log.SetOutput(&logBuf)
+	defer log.SetOutput(io.Discard)
+
+	srv := newProxyTestServer(upstream.URL, "", true)
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions",
+		strings.NewReader(`{"model":"m","stream":true}`))
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+
+	if !strings.Contains(logBuf.String(), "PROXY tool calls: search") {
+		t.Errorf("missing streamed tool-calls log line; got:\n%s", logBuf.String())
+	}
+}
+
 func TestNewProxyConfigNilWhenNoURL(t *testing.T) {
 	if p := newProxyConfig("", "key"); p != nil {
 		t.Error("newProxyConfig with empty URL should return nil (mock mode)")

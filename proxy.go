@@ -98,10 +98,31 @@ func (p *proxyConfig) handler(minimal bool) http.HandlerFunc {
 
 		// Relay status + headers + body back to the client. Copy headers before
 		// WriteHeader; stream the body with periodic flushes so SSE responses
-		// reach the client incrementally.
+		// reach the client incrementally. Tee the body as it streams so tool
+		// calls can be logged once the response completes without buffering the
+		// whole (possibly large) stream.
 		copyHeaders(w.Header(), resp.Header)
 		w.WriteHeader(resp.StatusCode)
-		flushingCopy(w, resp.Body)
+		tee := newTeeReader(resp.Body, maxToolCallCapture)
+		flushingCopy(w, tee)
+
+		logToolCalls(id, body, resp.Header.Get("Content-Type"), tee.captured())
+	}
+}
+
+// maxToolCallCapture bounds how much of a streamed response is buffered for
+// tool-call extraction; tool calls are announced early in a response, so this is
+// ample without holding large streams in memory.
+const maxToolCallCapture = 256 * 1024
+
+// logToolCalls emits one line listing the tools the client offered upstream and
+// one listing the tool calls the model made, when either is present.
+func logToolCalls(id uint64, reqBody []byte, respContentType string, respBody []byte) {
+	if offered := requestTools(reqBody); len(offered) > 0 {
+		log.Printf("[#%d] PROXY tools offered: %s", id, strings.Join(offered, ", "))
+	}
+	if called := responseTools(respContentType, respBody); len(called) > 0 {
+		log.Printf("[#%d] PROXY tool calls: %s", id, strings.Join(called, ", "))
 	}
 }
 

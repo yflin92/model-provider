@@ -48,7 +48,7 @@ func newProxyConfig(baseURL, apiKey string) *proxyConfig {
 // minimal run shows endpoint + model + status per request.
 func (p *proxyConfig) handler(minimal bool) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		id := requestCounter.Load()
+		id := requestIDFromContext(r.Context())
 
 		// Buffer the body so we can both forward it and read the model for the
 		// log line. Request bodies here are small (chat payloads), not streams.
@@ -57,7 +57,7 @@ func (p *proxyConfig) handler(minimal bool) http.HandlerFunc {
 			body, _ = io.ReadAll(r.Body)
 		}
 
-		target := p.baseURL + r.URL.Path
+		target := joinURL(p.baseURL, r.URL.Path)
 		if r.URL.RawQuery != "" {
 			target += "?" + r.URL.RawQuery
 		}
@@ -87,7 +87,14 @@ func (p *proxyConfig) handler(minimal bool) http.HandlerFunc {
 		}
 		defer resp.Body.Close()
 
-		logProxy(id, r.Method, target, modelFromBody(body), resp.StatusCode, time.Since(start))
+		logProxy(proxyLog{
+			id:     id,
+			method: r.Method,
+			target: target,
+			model:  modelFromBody(body),
+			status: resp.StatusCode,
+			dur:    time.Since(start),
+		})
 
 		// Relay status + headers + body back to the client. Copy headers before
 		// WriteHeader; stream the body with periodic flushes so SSE responses
@@ -98,14 +105,25 @@ func (p *proxyConfig) handler(minimal bool) http.HandlerFunc {
 	}
 }
 
+// proxyLog carries the fields for a single upstream-response log line.
+type proxyLog struct {
+	id     uint64
+	method string
+	target string
+	model  string
+	status int
+	dur    time.Duration
+}
+
 // logProxy emits the minimal-mode proxy line: upstream endpoint, model, and the
 // status returned by the upstream.
-func logProxy(id uint64, method, target, model string, status int, dur time.Duration) {
+func logProxy(l proxyLog) {
+	model := l.model
 	if model == "" {
 		model = "-"
 	}
 	log.Printf("[#%d] PROXY %s %s (model %s) -> %d %s (%s)",
-		id, method, target, model, status, http.StatusText(status), dur.Round(time.Millisecond))
+		l.id, l.method, l.target, model, l.status, http.StatusText(l.status), l.dur.Round(time.Millisecond))
 }
 
 // modelFromBody pulls the top-level `model` field out of a JSON request body,
@@ -121,6 +139,37 @@ func modelFromBody(body []byte) string {
 		return ""
 	}
 	return payload.Model
+}
+
+// joinURL joins the upstream base with the client's request path, collapsing a
+// version segment that appears at the end of the base and the start of the path.
+//
+// Clients send fully-qualified paths like "/v1/chat/completions", and upstreams
+// are conventionally documented with the version included
+// ("https://openrouter.ai/api/v1"). Naive concatenation would produce
+// ".../api/v1/v1/chat/completions", which OpenRouter serves as 404. When the
+// base's last path segment equals the request path's first segment (e.g. both
+// "v1"), the duplicate is dropped.
+func joinURL(base, path string) string {
+	baseSeg := lastPathSegment(base)
+	if baseSeg != "" && baseSeg == firstPathSegment(path) {
+		path = strings.TrimPrefix(path, "/"+baseSeg)
+	}
+	return base + path
+}
+
+// firstPathSegment returns the first "/"-delimited segment of a path, or "".
+func firstPathSegment(path string) string {
+	return strings.SplitN(strings.TrimPrefix(path, "/"), "/", 2)[0]
+}
+
+// lastPathSegment returns the final "/"-delimited segment of a URL or path, or "".
+func lastPathSegment(s string) string {
+	s = strings.TrimRight(s, "/")
+	if i := strings.LastIndex(s, "/"); i >= 0 {
+		return s[i+1:]
+	}
+	return s
 }
 
 // copyHeaders copies all header values from src to dst without clobbering keys

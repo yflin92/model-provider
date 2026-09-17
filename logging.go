@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"io"
 	"log"
@@ -14,6 +15,18 @@ import (
 // requestCounter gives every request a monotonically increasing id so paired
 // request/response log lines are easy to correlate.
 var requestCounter atomic.Uint64
+
+// requestIDKey is the context key under which the logging middleware stores the
+// id it assigns, so downstream handlers (e.g. the proxy) can log lines that
+// correlate with the middleware's request line.
+type requestIDKey struct{}
+
+// requestIDFromContext returns the id the logging middleware assigned, or 0 if
+// the request did not pass through the middleware.
+func requestIDFromContext(ctx context.Context) uint64 {
+	id, _ := ctx.Value(requestIDKey{}).(uint64)
+	return id
+}
 
 // sensitiveHeaders are redacted in logs so real credentials never hit disk.
 var sensitiveHeaders = map[string]bool{
@@ -64,6 +77,10 @@ func logging(next http.Handler, minimal bool) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		id := requestCounter.Add(1)
 		start := time.Now()
+
+		// Make the id available to downstream handlers so their log lines
+		// correlate with this request rather than re-reading the shared counter.
+		r = r.WithContext(context.WithValue(r.Context(), requestIDKey{}, id))
 
 		// Read and restore the body so the downstream handler still sees it.
 		var body []byte

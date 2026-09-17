@@ -73,6 +73,11 @@ go build -o mock-model-provider .
   `Authorization: Bearer <key>`. With `-minimal`, each request logs the inbound
   `MODEL` line plus a `PROXY <method> <endpoint> (model …) -> <status>` line, so
   you see endpoint, model, and the status returned by OpenRouter per request.
+  When a request offers tools or the model calls them, two more lines list the
+  names — `PROXY tools offered: …` (from the request) and `PROXY tool calls: …`
+  (from the response). Tool-call parsing tolerates all three formats (Anthropic
+  `tool_use`, OpenAI Chat `tool_calls`, OpenAI Responses `function_call`), for
+  both streaming and non-streaming responses.
 
 ## Point a client at it
 
@@ -123,5 +128,7 @@ go test ./...
 | `openai_chat.go` | `/v1/chat/completions` handler |
 | `openai_responses.go` | `/v1/responses` handler |
 | `proxy.go` | Proxy mode — relay requests to an upstream (OpenRouter) |
+| `toolcalls.go` | Tool-call extraction from requests/responses (all formats) |
 | `server_test.go` | End-to-end handler tests |
 | `proxy_test.go` | Proxy-mode relay + logging tests |
+| `toolcalls_test.go` | Tool-call extraction tests |

@@ -31,6 +31,18 @@ go run . -minimal        # log only endpoint + model per request
 MINIMAL=1 go run .       # or via env var
 ```
 
+Proxy mode — relay to a real upstream (OpenRouter) instead of returning canned
+replies:
+
+```sh
+export OPENROUTER_API_KEY=sk-or-...
+go run . -proxy https://openrouter.ai/api/v1
+PROXY=https://openrouter.ai/api/v1 go run .   # or via env var
+
+# combine with -minimal to log just endpoint + model + upstream status per call
+go run . -proxy https://openrouter.ai/api/v1 -minimal
+```
+
 Build a standalone binary:
 
 ```sh
@@ -53,6 +65,14 @@ go build -o mock-model-provider .
   `MODEL <method> <path> -> <model>` line per request, suppressing the header/
   body dump and the response line. The quiet way to watch which model a harness
   asks for on each call.
+- **Proxy mode.** Pass `-proxy <base-url>` (or `PROXY=<base-url>`) to relay every
+  request to a real upstream — e.g. OpenRouter at `https://openrouter.ai/api/v1`
+  — and stream the response (status, headers, body) straight back to the client
+  instead of returning a canned reply. The request path, body, and headers are
+  forwarded as-is; when `OPENROUTER_API_KEY` is set it is sent as
+  `Authorization: Bearer <key>`. With `-minimal`, each request logs the inbound
+  `MODEL` line plus a `PROXY <method> <endpoint> (model …) -> <status>` line, so
+  you see endpoint, model, and the status returned by OpenRouter per request.
 
 ## Point a client at it
 
@@ -102,4 +122,6 @@ go test ./...
 | `claude.go` | `/v1/messages` handler (Anthropic format) |
 | `openai_chat.go` | `/v1/chat/completions` handler |
 | `openai_responses.go` | `/v1/responses` handler |
+| `proxy.go` | Proxy mode — relay requests to an upstream (OpenRouter) |
 | `server_test.go` | End-to-end handler tests |
+| `proxy_test.go` | Proxy-mode relay + logging tests |
